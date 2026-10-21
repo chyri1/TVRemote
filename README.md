@@ -1,69 +1,96 @@
 # TV Remote by Chyri 📺
 
-Aplicativo Windows que fica na bandeja do sistema (system tray) e abre um painel de controle estilo Windows 11/Acrylic para sua Android TV.
+> **A modern, lightweight Windows tray application to control Android TV and Google TV devices.**
 
-Desenvolvido em **Flutter**, com o núcleo totalmente desacoplado para facilitar o futuro port para **Android**.
+Control your Android & Google TV right from your Windows system tray. Features live screen mirroring in an always-on-top window, typing directly from your PC physical keyboard, quick app launches, now-playing media metadata, full remote navigation, and built-in ADB tools with auto-discovery. Lightweight, secure, and multi-device ready.
 
----
-
-## ✨ Recursos
-
-- 🔹 **Bandeja do Sistema (Tray)**: Ícone discreto perto do relógio e bateria. Clique com o botão esquerdo para abrir o controle; botão direito para menu de contexto (abrir, sair).
-- 🔹 **Flyout com efeito Acrylic**: Abre acima da barra de tarefas, com cantos arredondados, adaptado ao tema Claro/Escuro e à cor de destaque do seu Windows.
-- 🔹 **Fecha ao perder o foco**: Comportamento idêntico aos menus de Wi-Fi/Bateria do Windows.
-- 🔹 **Protocolo Android TV Remote v2**: Conexão segura via TLS e pareamento por código de 6 caracteres na porta 6467/6466 (o mesmo usado pelo app Google TV, sem precisar de root ou modo desenvolvedor na TV).
-- 🔹 **Descoberta Automática na Rede (mDNS)** + Inserção Manual de IP.
-- 🔹 **Suporte a Múltiplas TVs**: Alterne rapidamente entre TVs da casa pelo menu superior.
-- 🔹 **Controles Completos**:
-  - D-Pad direcional (Cima, Baixo, Esquerda, Direita) + OK centralizado.
-  - Voltar, Início (Home) e Menu.
-  - Volume (+ / - com repetição rápida ao segurar) e Mudo com indicador de porcentagem.
-  - Ligar / Desligar (Power).
-  - Mídia: Play/Pause, Avançar e Retroceder.
-  - Digitar do teclado do PC direto na TV.
-  - Atalhos para aplicativos: YouTube, Netflix, Prime Video, Disney+.
-- 🔹 **Navegação pelo Teclado Físico**: Quando a janela está aberta:
-  - Setas: Direcionais da TV
-  - `Enter`: OK
-  - `Esc` / `Backspace`: Voltar
-  - `Home`: Início
-  - `+` / `-`: Volume
-- 🌐 **Internacionalização (i18n)**:
-  - Detecta o idioma do sistema.
-  - Suporte nativo para **Português**, **Espanhol** e **Inglês** (fallback).
-  - Arquivos abertos em `lib/l10n/` (`.arb`) para a comunidade adicionar novos idiomas.
+*(Android companion app coming soon!)*
 
 ---
 
-## 🚀 Como executar no Windows
+## ✨ Features
 
-### Pré-requisito: Ativar Modo de Desenvolvedor no Windows
-O Windows requer a permissão de links simbólicos para compilar plugins nativos em C++:
-1. Pressione `Win + I` ou abra as Configurações do Windows.
-2. Vá em **Atualização e Segurança** › **Para desenvolvedores** (ou digite `Modo de desenvolvedor` no menu Iniciar).
-3. Ative a chave **Modo de desenvolvedor**.
+- 🔹 **Windows System Tray Integration**: Unobtrusive icon next to the taskbar clock. Left-click to open the control flyout; right-click for quick actions (open, settings, exit).
+- 🔹 **Acrylic Flyout UI**: Floats right above your Windows taskbar with smooth animations, rounded corners, and native light/dark theme adaptation matching Windows 11 aesthetics.
+- 🔹 **Live Screen Mirroring**:
+  - **Cast Media Mode**: Real-time album art, media title, and player status.
+  - **ADB Screen Mode**: Real-time continuous TV screen mirroring.
+  - **Pop-out Window**: Pop out the mirror feed into a standalone, resizable, always-on-top floating window with compact mode and aspect ratio locking.
+- 🔹 **Smart TV Keyboard with Real-time Typing**:
+  - Type directly on your TV using your computer's physical keyboard.
+  - Automatic detection of active input fields (IME) on the TV.
+  - Automatic delta-typing and manual send modes.
+- 🔹 **Complete Remote Control**:
+  - Directional D-Pad (Up, Down, Left, Right) + center Select/OK.
+  - Back, Home, Menu, and Power (standby/wake).
+  - Volume control (+ / - with rapid hold repetition, percentage indicator, and mute toggle).
+  - Media playback: Play, Pause, Rewind, Fast-Forward, Previous, and Next.
+- 🔹 **Quick App Launcher**:
+  - Reorderable, toggleable one-click shortcuts for your favorite streaming apps: **YouTube**, **Netflix**, **Disney+**, **Max**, and **Settings**, plus support for custom apps.
+- 🔹 **Built-in ADB Tools & Terminal**:
+  - Integrated terminal console for diagnostics and raw command execution.
+  - Native support for **Minimal ADB and Fastboot** and automatic platform-tools downloader from official Google sources.
+  - Customizable port configuration (default 5555 and dynamic ports).
+- 🔹 **Zero-Configuration Network Discovery (mDNS)**:
+  - Automatically discovers Android TV and Google TV devices on your local Wi-Fi/Ethernet network.
+  - Multi-TV support with instant device switching.
+  - Persistent TLS pairing: PINs are securely saved locally so you only ever have to pair once.
+- 🔹 **Physical Keyboard Navigation**:
+  - Arrow keys: Navigate TV D-pad
+  - `Enter`: Select / OK
+  - `Esc` / `Backspace`: Back
+  - `Home`: Home
+  - `+` / `-`: Volume up / down
+- 🌐 **Multilingual & System Theming**:
+  - Automatically matches your system language with native support for **English**, **Portuguese (Português)**, and **Spanish (Español)**.
+  - Automatic Dark/Light mode following your Windows theme.
 
-### Executando em desenvolvimento:
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+1. **Flutter SDK** (3.24+ recommended).
+2. **Windows Developer Mode** enabled (required for symlinks in native C++ desktop plugins):
+   - Open Windows Settings (`Win + I`) > **Privacy & Security** > **For developers**.
+   - Enable **Developer Mode**.
+
+### Running in Development
+
 ```bash
 flutter run -d windows
 ```
 
-### Gerando o executável final:
+### Building for Production (Standalone .exe)
+
 ```bash
 flutter build windows --release
 ```
-O executável compilado ficará em `build\windows\x64\runner\Release\tv_remote.exe`.
+
+The compiled standalone executable will be located at:
+`build\windows\x64\runner\Release\tv_remote.exe`
 
 ---
 
-## 🌍 Como contribuir com novas traduções
+## 🌍 Contributing & Localization
 
-Os textos estão definidos no formato padrão Flutter ARB (JSON):
-- `lib/l10n/app_pt.arb` (Português)
-- `lib/l10n/app_es.arb` (Espanhol)
-- `lib/l10n/app_en.arb` (Inglês)
+All interface strings are localized using the standard Flutter ARB format:
+- `lib/l10n/app_en.arb` (English - default)
+- `lib/l10n/app_pt.arb` (Portuguese)
+- `lib/l10n/app_es.arb` (Spanish)
 
-Para adicionar uma nova língua (ex.: Francês `app_fr.arb` ou Alemão `app_de.arb`):
-1. Duplique `app_en.arb` e renomeie para `app_<código>.arb`.
-2. Traduza as frases mantendo as chaves.
-3. Execute `flutter gen-l10n`.
+To contribute translations for a new language (e.g. French `app_fr.arb` or German `app_de.arb`):
+1. Duplicate `app_en.arb` and rename it to `app_<locale>.arb`.
+2. Translate the values while preserving the keys.
+3. Run `flutter gen-l10n`.
+
+---
+
+## 📄 License
+
+This project is dedicated to the public domain under the **Creative Commons CC0 1.0 Universal** License. See the [LICENSE](LICENSE) file for full details.
+
+---
+
+Made with ❤️ by [Chyri](https://www.chyri.com.br/)
