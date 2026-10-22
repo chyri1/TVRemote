@@ -465,6 +465,7 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
         adb.currentFrame!,
         fit: BoxFit.contain,
         gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
       );
     }
 
@@ -478,9 +479,13 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
             if (adb.state == AdbState.missingAdb) ...[
               const Icon(Icons.adb_rounded, size: 28, color: Colors.orangeAccent),
               const SizedBox(height: 6),
-              const Text(
-                'Ferramenta ADB não encontrada',
-                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              Text(
+                appTr(
+                  pt: 'Ferramenta ADB não encontrada',
+                  en: 'ADB tool not found',
+                  es: 'Herramienta ADB no encontrada',
+                ),
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               SizedBox(
@@ -490,7 +495,14 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                   ),
                   onPressed: () => adb.downloadPlatformTools(),
-                  child: const Text('Baixar ADB Oficial (Google)', style: TextStyle(fontSize: 10)),
+                  child: Text(
+                    appTr(
+                      pt: 'Baixar ADB Oficial (Google)',
+                      en: 'Download Official ADB (Google)',
+                      es: 'Descargar ADB Oficial (Google)',
+                    ),
+                    style: const TextStyle(fontSize: 10),
+                  ),
                 ),
               ),
             ] else if (adb.state == AdbState.downloadingAdb) ...[

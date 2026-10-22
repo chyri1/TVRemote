@@ -651,12 +651,17 @@ class AdbService extends ChangeNotifier {
       final localFile = File('$targetDir\\screenshot.png');
       if (await localFile.exists()) {
         final bytes = await localFile.readAsBytes();
-        // Validação da assinatura PNG: 0x89 0x50 0x4E 0x47
-        if (bytes.length > 8 &&
+        final len = bytes.length;
+        // Validação rigorosa: cabeçalho PNG (0x89 0x50 0x4E 0x47) e marcador final de integridade IEND (0x49 0x45 0x4E 0x44)
+        if (len > 64 &&
             bytes[0] == 0x89 &&
             bytes[1] == 0x50 &&
             bytes[2] == 0x4E &&
-            bytes[3] == 0x47) {
+            bytes[3] == 0x47 &&
+            bytes[len - 8] == 0x49 &&
+            bytes[len - 7] == 0x45 &&
+            bytes[len - 6] == 0x4E &&
+            bytes[len - 5] == 0x44) {
           _currentFrame = bytes;
           notifyListeners();
           return true;

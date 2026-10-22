@@ -1521,6 +1521,9 @@ class _MirrorWindowAppState extends State<MirrorWindowApp> with WindowListener {
                                     adb.currentFrame!,
                                     fit: BoxFit.contain,
                                     gaplessPlayback: true,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const SizedBox.shrink(),
                                   ),
                                 )
                               : _buildAdbWindowContent(adb))),
@@ -2406,6 +2409,7 @@ class _MirrorWindowAppState extends State<MirrorWindowApp> with WindowListener {
         adb.currentFrame!,
         fit: BoxFit.contain,
         gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
       );
     }
 
