@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../core/adb_service.dart';
@@ -12,11 +13,13 @@ import 'adb_port_dialog.dart';
 class ScreenMirrorCard extends StatefulWidget {
   final TvController controller;
   final VoidCallback onOpenPopout;
+  final VoidCallback? onOpenTerminal;
 
   const ScreenMirrorCard({
     super.key,
     required this.controller,
     required this.onOpenPopout,
+    this.onOpenTerminal,
   });
 
   @override
@@ -173,7 +176,9 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
                         // Display Feed (Cast Media vs ADB Screencap)
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onTap: widget.onOpenPopout,
+                          onTap: (Platform.isAndroid && widget.onOpenTerminal != null)
+                              ? widget.onOpenTerminal
+                              : widget.onOpenPopout,
                           child: MouseRegion(
                             cursor: SystemMouseCursors.click,
                             child: widget.controller.isScreenOff
@@ -243,76 +248,143 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                // Live badge
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 7, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.75),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: (!widget.controller.isScreenOff &&
-                                              ((isAdbMode && adb.state == AdbState.connected) ||
-                                                  (!isAdbMode && info != null && info.isPlaying)))
-                                          ? const Color(0xFF107C41)
-                                          : Colors.redAccent.withValues(alpha: 0.6),
-                                      width: 0.8,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        width: 7,
-                                        height: 7,
-                                        decoration: BoxDecoration(
-                                          color: (!widget.controller.isScreenOff &&
-                                                  ((isAdbMode && adb.state == AdbState.connected) ||
-                                                      (!isAdbMode && info != null && info.isPlaying)))
-                                              ? const Color(0xFF107C41)
-                                              : Colors.redAccent,
-                                          shape: BoxShape.circle,
+                                // Live / Loading badge
+                                Builder(
+                                  builder: (context) {
+                                    final isScreenOff = widget.controller.isScreenOff;
+                                    final isAdbLoading = !isScreenOff && isAdbMode && (adb.state != AdbState.connected || adb.isAdbStale);
+                                    final isLive = !isScreenOff &&
+                                        ((isAdbMode && adb.state == AdbState.connected && !adb.isAdbStale) ||
+                                            (!isAdbMode && info != null && info.isPlaying));
+
+                                    final badgeColor = isScreenOff
+                                        ? Colors.redAccent
+                                        : (isAdbLoading
+                                            ? Colors.amber
+                                            : (isLive ? const Color(0xFF107C41) : Colors.redAccent));
+
+                                    final hasFrame = adb.currentFrame != null;
+                                    final String badgeText;
+                                    if (isScreenOff) {
+                                      badgeText = appTr(pt: 'DESLIGADA', en: 'OFF', es: 'APAGADA');
+                                    } else if (isAdbMode && isAdbLoading) {
+                                      if (hasFrame) {
+                                        final secs = adb.secondsSinceLastFrame;
+                                        badgeText = appTr(
+                                          pt: 'CARREGANDO (${secs}s)',
+                                          en: 'LOADING (${secs}s)',
+                                          es: 'CARGANDO (${secs}s)',
+                                        );
+                                      } else {
+                                        badgeText = appTr(pt: 'CARREGANDO', en: 'LOADING', es: 'CARGANDO');
+                                      }
+                                    } else {
+                                      badgeText = appTr(pt: 'AO VIVO', en: 'LIVE', es: 'EN VIVO');
+                                    }
+
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 7, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(alpha: 0.75),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: badgeColor.withValues(alpha: 0.7),
+                                          width: 0.8,
                                         ),
                                       ),
-                                      const SizedBox(width: 5),
-                                      Text(
-                                        widget.controller.isScreenOff
-                                            ? appTr(pt: 'DESLIGADA', en: 'OFF', es: 'APAGADA')
-                                            : appTr(pt: 'AO VIVO', en: 'LIVE', es: 'EN VIVO'),
-                                        style: const TextStyle(
-                                          fontSize: 9.5,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          letterSpacing: 0.5,
-                                        ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 7,
+                                            height: 7,
+                                            decoration: BoxDecoration(
+                                              color: badgeColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            badgeText,
+                                            style: const TextStyle(
+                                              fontSize: 9.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                              letterSpacing: 0.5,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
+                                    );
+                                  },
                                 ),
 
-                                // Pop-out button
-                                Tooltip(
-                                  message: appTr(pt: 'Abrir em tela destacada', en: 'Open in separate window', es: 'Abrir en ventana separada'),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: widget.onOpenPopout,
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(5),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withValues(alpha: 0.7),
-                                          borderRadius: BorderRadius.circular(6),
+                                // Pop-out button (apenas no Desktop Windows/Mac/Linux)
+                                if (!Platform.isAndroid && !Platform.isIOS)
+                                  Tooltip(
+                                    message: appTr(pt: 'Abrir em tela destacada', en: 'Open in separate window', es: 'Abrir en ventana separada'),
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: widget.onOpenPopout,
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(5),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(alpha: 0.7),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Icon(
+                                            Icons.open_in_new_rounded,
+                                            size: 14,
+                                            color: _hovered ? p.accent : Colors.white,
+                                          ),
                                         ),
-                                        child: Icon(
-                                          Icons.open_in_new_rounded,
-                                          size: 14,
-                                          color: _hovered ? p.accent : Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                else if (Platform.isAndroid && widget.onOpenTerminal != null)
+                                  Tooltip(
+                                    message: 'Abrir Terminal ADB',
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: widget.onOpenTerminal,
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF161821),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: const Color(0xFF60CDFF).withValues(alpha: 0.5),
+                                              width: 0.8,
+                                            ),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.terminal_rounded,
+                                                size: 13,
+                                                color: Color(0xFF60CDFF),
+                                              ),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Terminal',
+                                                style: TextStyle(
+                                                  color: Color(0xFF60CDFF),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
                               ],
                             ),
                           ),
@@ -460,7 +532,7 @@ class _ScreenMirrorCardState extends State<ScreenMirrorCard> {
   }
 
   Widget _buildAdbContent(Palette p, dynamic tv, AdbService adb) {
-    if (adb.state == AdbState.connected && adb.currentFrame != null) {
+    if (adb.currentFrame != null && (adb.state == AdbState.connected || adb.state == AdbState.connecting)) {
       return Image.memory(
         adb.currentFrame!,
         fit: BoxFit.contain,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,7 @@ import '../core/tv_controller.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'mirror_window.dart';
 import 'theme.dart';
+import 'widgets/adb_terminal_card.dart';
 import 'widgets/app_grid.dart';
 import 'widgets/dpad.dart';
 import 'widgets/now_playing_card.dart';
@@ -46,6 +48,28 @@ class _RemoteViewState extends State<RemoteView> {
   final TextEditingController _keyboardInputController = TextEditingController();
   final FocusNode _keyboardFocusNode = FocusNode();
   Timer? _keyboardDebounceTimer;
+
+  bool _showAdbTerminal = false;
+  final GlobalKey _terminalKey = GlobalKey();
+
+  void _toggleAdbTerminal() {
+    setState(() {
+      _showAdbTerminal = !_showAdbTerminal;
+    });
+    if (_showAdbTerminal) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _terminalKey.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            alignment: 0.1,
+          );
+        }
+      });
+    }
+  }
 
   StreamSubscription<String>? _extCharSub;
   StreamSubscription<void>? _extBackSub;
@@ -215,6 +239,29 @@ class _RemoteViewState extends State<RemoteView> {
 
 
 
+  void _openKeyboardInput() {
+    setState(() {
+      _showKeyboardInput = true;
+      final initial = widget.controller.imeStatus?.value ?? '';
+      if (initial.isNotEmpty && _keyboardInputController.text.isEmpty) {
+        _keyboardInputController.text = initial;
+        _keyboardInputController.selection =
+            TextSelection.collapsed(offset: initial.length);
+      }
+      _lastSentText = _keyboardInputController.text;
+    });
+    _keyboardFocusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _keyboardFocusNode.context != null) {
+        Scrollable.ensureVisible(
+          _keyboardFocusNode.context!,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 300),
+        );
+      }
+    });
+  }
+
   void _toggleKeyboardInput() {
     setState(() {
       _showKeyboardInput = !_showKeyboardInput;
@@ -227,6 +274,15 @@ class _RemoteViewState extends State<RemoteView> {
         }
         _lastSentText = _keyboardInputController.text;
         _keyboardFocusNode.requestFocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _keyboardFocusNode.context != null) {
+            Scrollable.ensureVisible(
+              _keyboardFocusNode.context!,
+              alignment: 0.5,
+              duration: const Duration(milliseconds: 300),
+            );
+          }
+        });
       } else {
         _lastSentText = '';
         _keyboardFocusNode.unfocus();
@@ -409,26 +465,34 @@ class _RemoteViewState extends State<RemoteView> {
     final c = widget.controller;
     final tv = c.selected;
 
-    return ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-      child: SingleChildScrollView(
-        physics: const ClampingScrollPhysics(),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-            // Top Header: TV Selector & Power
-            _buildHeader(loc, p, c),
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Column(
+      children: [
+        // Top Header: TV Selector & Power (fixo no topo)
+        _buildHeader(loc, p, c),
 
-            // Body
-            if (c.status == TvStatus.noTv)
-              _buildNoTvState(loc, p)
-            else if (c.status == TvStatus.needsPairing)
-              _buildNeedsPairingState(loc, p, tv?.host)
-            else
-              _buildControls(loc, p, c),
-          ],
+        // Conteúdo rolável abaixo da barra fixa
+        Expanded(
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.only(bottom: bottomInset > 0 ? 80 : 0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (c.status == TvStatus.noTv)
+                    _buildNoTvState(loc, p)
+                  else if (c.status == TvStatus.needsPairing)
+                    _buildNeedsPairingState(loc, p, tv?.host)
+                  else
+                    _buildControls(loc, p, c),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -638,37 +702,40 @@ class _RemoteViewState extends State<RemoteView> {
         children: [
             // Active TV Keyboard Banner (Google Home style)
             if (c.hasActiveIme) ...[
-              InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: _toggleKeyboardInput,
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: p.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: p.accent.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.keyboard_rounded, size: 20, color: p.accent),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          c.imeStatus?.label != null && c.imeStatus!.label!.isNotEmpty
-                              ? 'Teclado na TV: ${c.imeStatus!.label}'
-                              : 'Teclado ativo na TV',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: p.accent,
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: _openKeyboardInput,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: p.accent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: p.accent.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.keyboard_rounded, size: 20, color: p.accent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            c.imeStatus?.label != null && c.imeStatus!.label!.isNotEmpty
+                                ? 'Teclado na TV: ${c.imeStatus!.label}'
+                                : 'Teclado ativo na TV',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: p.accent,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      Icon(Icons.chevron_right_rounded, size: 18, color: p.accent),
-                    ],
+                        Icon(Icons.chevron_right_rounded, size: 18, color: p.accent),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -747,9 +814,21 @@ class _RemoteViewState extends State<RemoteView> {
                   return ScreenMirrorCard(
                     controller: c,
                     onOpenPopout: () => openScreenMirrorPopout(context, c),
+                    onOpenTerminal: Platform.isAndroid ? _toggleAdbTerminal : null,
                   );
                 },
               ),
+
+            // Terminal ADB interativo direto na tela do controle (APENAS NO ANDROID)
+            if (Platform.isAndroid && _showAdbTerminal) ...[
+              Container(
+                key: _terminalKey,
+                child: AdbTerminalCard(
+                  controller: c,
+                  onClose: _toggleAdbTerminal,
+                ),
+              ),
+            ],
 
             // Now Playing Banner (Title, Artist, Artwork in 16:9 & App)
             NowPlayingCard(controller: c),
@@ -800,15 +879,28 @@ class _RemoteViewState extends State<RemoteView> {
                 ),
                 PadButton(
                   size: 38,
-                  icon: Icons.mic_rounded,
+                  icon: c.isVoiceRecording ? Icons.mic_rounded : Icons.mic_none_rounded,
                   iconSize: 20,
                   tooltip: appTr(
-                    pt: 'Google Assistente / Assistente de voz',
-                    en: 'Google Assistant / Voice assistant',
-                    es: 'Asistente de Google / Asistente de voz',
+                    pt: c.isVoiceRecording
+                        ? 'Ouvindo sua voz... Toque para enviar'
+                        : 'Google Assistente / Pesquisa por voz',
+                    en: c.isVoiceRecording
+                        ? 'Listening to voice... Tap to send'
+                        : 'Google Assistant / Voice search',
+                    es: c.isVoiceRecording
+                        ? 'Escuchando tu voz... Toca para enviar'
+                        : 'Asistente de Google / Búsqueda por voz',
                   ),
-                  foreground: const Color(0xFF4285F4),
-                  onPressed: () => c.sendKey(KeyCode.assist),
+                  foreground: c.isVoiceRecording ? Colors.redAccent : const Color(0xFF4285F4),
+                  background: c.isVoiceRecording ? Colors.redAccent.withValues(alpha: 0.22) : null,
+                  onPressed: () {
+                    if (c.isVoiceRecording) {
+                      c.stopVoiceSearch();
+                    } else {
+                      c.startVoiceSearch();
+                    }
+                  },
                 ),
               ],
             ),
@@ -1073,6 +1165,7 @@ class _RemoteViewState extends State<RemoteView> {
             child: TextField(
               controller: _manualCmdController,
               focusNode: _manualCmdFocus,
+              scrollPadding: const EdgeInsets.only(bottom: 100),
               textAlignVertical: TextAlignVertical.center,
               style: TextStyle(fontSize: 12.5, color: p.text),
               decoration: InputDecoration(
@@ -1263,10 +1356,52 @@ class _RemoteViewState extends State<RemoteView> {
             ],
           ),
           const SizedBox(height: 8),
+          ListenableBuilder(
+            listenable: AdbService.instance,
+            builder: (context, _) {
+              if (AdbService.instance.state == AdbState.connected) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 1),
+                      child: Icon(Icons.info_outline_rounded, size: 14, color: Colors.amber),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        appTr(
+                          pt: 'ADB desconectado: as teclas e a digitação podem não funcionar sem o ADB devidamente ativo.',
+                          en: 'ADB disconnected: keys and typing may not work without ADB properly active.',
+                          es: 'ADB desconectado: las teclas y la escritura pueden no funcionar sin ADB debidamente activo.',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          color: Colors.amber,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
           TextField(
             controller: _keyboardInputController,
             focusNode: _keyboardFocusNode,
             autofocus: true,
+            scrollPadding: const EdgeInsets.only(bottom: 120),
             style: TextStyle(color: p.text, fontSize: 12.5),
             decoration: InputDecoration(
               isDense: true,

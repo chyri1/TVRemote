@@ -85,7 +85,9 @@ void main(List<String> args) {
   }
 
   // Load Windows system accent color
-  await SystemTheme.accentColor.load();
+  if (Platform.isWindows) {
+    await SystemTheme.accentColor.load();
+  }
 
   final tvController = TvController();
   MirrorTracker.registerActiveController(tvController);

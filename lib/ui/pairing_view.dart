@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -260,107 +261,154 @@ class _PairingViewState extends State<PairingView> {
   Widget build(BuildContext context) {
     final loc = AppLocalizations.of(context);
     final p = Palette.of(context);
+    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
-    return ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-      child: SingleChildScrollView(
-        physics: const ClampingScrollPhysics(),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header with optional back button (only when entering PIN code) & settings button
-            Row(
-              children: [
-                if (_step == PairStep.enterCode) ...[
-                  PadButton(
-                    size: 32,
-                    icon: Icons.arrow_back_rounded,
-                    iconSize: 18,
-                    tooltip: loc.cancel,
-                    onPressed: () {
-                      widget.controller.cancelPairing();
-                      _error = null;
-                      _setStep(PairStep.selectHost);
-                    },
-                  ),
-                  const SizedBox(width: 10),
-                ] else ...[
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: p.accent.withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.tv_rounded, size: 18, color: p.accent),
-                  ),
-                  const SizedBox(width: 10),
-                ],
-                Expanded(
-                  child: Text(
-                    _step == PairStep.enterCode
-                        ? loc.enterCodeTitle
-                        : (widget.controller.tvs.isNotEmpty
-                            ? 'TV Remote'
-                            : loc.pairTitle),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: p.text,
-                    ),
-                  ),
-                ),
-                PadButton(
-                  size: 32,
-                  icon: Icons.info_outline_rounded,
-                  iconSize: 18,
-                  tooltip: 'Configurações e sobre',
-                  onPressed: () => SettingsDialog.show(context),
-                ),
-              ],
+    final topBar = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: p.stroke, width: 1)),
+      ),
+      child: Row(
+        children: [
+          if (_step == PairStep.enterCode) ...[
+            PadButton(
+              size: 32,
+              icon: Icons.arrow_back_rounded,
+              iconSize: 18,
+              tooltip: loc.cancel,
+              onPressed: () {
+                widget.controller.cancelPairing();
+                _error = null;
+                _setStep(PairStep.selectHost);
+              },
             ),
-            const SizedBox(height: 16),
+            const SizedBox(width: 10),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: p.accent.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.tv_rounded, size: 18, color: p.accent),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: Text(
+              _step == PairStep.enterCode
+                  ? loc.enterCodeTitle
+                  : (widget.controller.tvs.isNotEmpty
+                      ? 'TV Remote'
+                      : loc.pairTitle),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: p.text,
+              ),
+            ),
+          ),
+          PadButton(
+            size: 32,
+            icon: Icons.info_outline_rounded,
+            iconSize: 18,
+            tooltip: 'Configurações e sobre',
+            onPressed: () => SettingsDialog.show(context),
+          ),
+        ],
+      ),
+    );
 
-            if (_error != null) ...[
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: p.danger.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: p.danger.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.error_outline_rounded, color: p.danger, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: p.danger, fontSize: 12),
-                      ),
-                    ),
-                  ],
+    final contentChildren = <Widget>[
+      if (_error != null) ...[
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: p.danger.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: p.danger.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.error_outline_rounded, color: p.danger, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: p.danger, fontSize: 12),
                 ),
               ),
-              const SizedBox(height: 12),
             ],
-
-            _step == PairStep.enterCode
-                ? _buildEnterCodeStep(loc, p)
-                : _step == PairStep.success
-                    ? _buildSuccessStep(loc, p)
-                    : _buildSelectHostStep(loc, p),
-
-            const SizedBox(height: 14),
-            const ChyriCredits(),
-          ],
+          ),
         ),
-      ),
-    ),
-  );
-}
+        const SizedBox(height: 12),
+      ],
+
+      _step == PairStep.enterCode
+          ? _buildEnterCodeStep(loc, p)
+          : _step == PairStep.success
+              ? _buildSuccessStep(loc, p)
+              : _buildSelectHostStep(loc, p),
+
+      if (isDesktop) ...[
+        const SizedBox(height: 14),
+        const ChyriCredits(),
+      ],
+    ];
+
+    final Widget scrollableBody;
+    if (!isDesktop) {
+      scrollableBody = LayoutBuilder(
+        builder: (context, constraints) {
+          return ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ...contentChildren,
+                        const Spacer(),
+                        const SizedBox(height: 16),
+                        const ChyriCredits(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      scrollableBody = ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+        child: SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: contentChildren,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        topBar,
+        Expanded(child: scrollableBody),
+      ],
+    );
+  }
 
   void _showRenameDialog(TvDevice tv) {
     final ctrl = TextEditingController(text: tv.name);

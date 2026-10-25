@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -280,11 +282,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   const SizedBox(height: 18),
 
-                  // TAMANHO DA JANELA
-                  _buildSectionHeader(
-                    tr('TAMANHO DA JANELA', 'WINDOW SIZE', 'TAMAÑO DE LA VENTANA'),
-                    p,
-                  ),
+                  if (Platform.isWindows) ...[
+                    // TAMANHO DA JANELA
+                    _buildSectionHeader(
+                      tr('TAMANHO DA JANELA', 'WINDOW SIZE', 'TAMAÑO DE LA VENTANA'),
+                      p,
+                    ),
                   const SizedBox(height: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -367,6 +370,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                ],
 
                   // 2. DURAÇÃO DAS ANIMAÇÕES
                   _buildSectionHeader(
@@ -823,11 +827,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   const SizedBox(height: 18),
 
-                  // 6. DEPURAÇÃO ADB & PLATFORM-TOOLS
-                  _buildSectionHeader(
-                    tr('DEPURAÇÃO ADB', 'ADB DEBUGGING', 'DEPURACIÓN ADB'),
-                    p,
-                  ),
+                  if (Platform.isWindows) ...[
+                    // 6. DEPURAÇÃO ADB & PLATFORM-TOOLS
+                    _buildSectionHeader(
+                      tr('DEPURAÇÃO ADB', 'ADB DEBUGGING', 'DEPURACIÓN ADB'),
+                      p,
+                    ),
                   const SizedBox(height: 6),
                   Container(
                     decoration: BoxDecoration(
@@ -913,6 +918,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                ],
 
                   // 7. ESPELHAMENTO DE TELA (SCREEN MIRROR)
                   _buildSectionHeader(

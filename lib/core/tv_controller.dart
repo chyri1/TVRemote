@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
 
 import 'adb_service.dart';
 import 'app_settings.dart';
@@ -211,6 +214,13 @@ class TvController extends ChangeNotifier {
   StreamSubscription<AppInfo>? _appSub;
   StreamSubscription<CastMediaStatus?>? _castMediaSub;
   StreamSubscription<ImeStatus>? _imeSub;
+  StreamSubscription<int>? _voiceSessionSub;
+  StreamSubscription<int>? _voiceEndSub;
+  AudioRecorder? _audioRecorder;
+  StreamSubscription<List<int>>? _audioStreamSub;
+  int? _activeVoiceSessionId;
+  bool _isVoiceRecording = false;
+  Timer? _voiceTimeoutTimer;
   Timer? _reconnectTimer;
   int _attempt = 0;
   bool? _powerOn;
@@ -219,6 +229,8 @@ class TvController extends ChangeNotifier {
   NowPlayingInfo? _nowPlaying;
   ImeStatus? _imeStatus;
   bool _disposed = false;
+
+  bool get isVoiceRecording => _isVoiceRecording;
 
   final StreamController<String> _externalKeystrokeCtrl =
       StreamController<String>.broadcast();
@@ -384,6 +396,12 @@ class TvController extends ChangeNotifier {
         _imeStatus = status;
         _safeNotifyListeners();
       });
+      _voiceSessionSub = client.voiceSession.listen((sessionId) {
+        _onTvVoiceSessionStarted(sessionId);
+      });
+      _voiceEndSub = client.voiceEnd.listen((sessionId) {
+        stopVoiceSearch();
+      });
       _closedSub = client.closed.listen((_) {
         if (_remote == client) _scheduleReconnect();
       });
@@ -476,13 +494,17 @@ class TvController extends ChangeNotifier {
   }
 
   Future<void> _teardown() async {
+    await stopVoiceSearch();
     await _closedSub?.cancel();
     await _powerSub?.cancel();
     await _volumeSub?.cancel();
     await _appSub?.cancel();
     await _castMediaSub?.cancel();
     await _imeSub?.cancel();
-    _closedSub = _powerSub = _volumeSub = _appSub = _castMediaSub = _imeSub = null;
+    await _voiceSessionSub?.cancel();
+    await _voiceEndSub?.cancel();
+    _closedSub = _powerSub = _volumeSub = _appSub = _castMediaSub = _imeSub =
+        _voiceSessionSub = _voiceEndSub = null;
     _imeStatus = null;
     final c = _cast;
     _cast = null;
@@ -493,6 +515,138 @@ class TvController extends ChangeNotifier {
     _currentApp = null;
     _nowPlaying = null;
     if (!_disposed) notifyListeners();
+  }
+
+  BytesBuilder? _voiceAudioBuffer;
+
+  /// Initiates microphone capture on the local device and streams audio to Android TV Remote v2.
+  Future<void> startVoiceSearch() async {
+    final r = _remote;
+    if (r == null || !r.isConnected) {
+      ensureConnected();
+      return;
+    }
+
+    if (_isVoiceRecording) return;
+
+    // 1. Request microphone permission
+    try {
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        return;
+      }
+    } catch (_) {}
+
+    _audioRecorder ??= AudioRecorder();
+    final hasPerm = await _audioRecorder!.hasPermission();
+    if (!hasPerm) return;
+
+    _isVoiceRecording = true;
+    _activeVoiceSessionId = null;
+    _voiceAudioBuffer = BytesBuilder(copy: false);
+    _safeNotifyListeners();
+
+    // 2. Send KEYCODE_SEARCH (84) to trigger voice search on TV
+    r.sendKey(KeyCode.search);
+
+    // 3. Start audio stream with standard Google TV Remote v2 format (PCM 16-bit, 8000 Hz, mono)
+    try {
+      final recordStream = await _audioRecorder!.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 8000,
+          numChannels: 1,
+        ),
+      );
+
+      const int minVoiceChunk = 8192;
+      const int maxVoiceChunk = 16384;
+
+      _audioStreamSub?.cancel();
+      _audioStreamSub = recordStream.listen((chunk) {
+        if (!_isVoiceRecording) return;
+        final buffer = _voiceAudioBuffer;
+        if (buffer == null) return;
+        buffer.add(chunk);
+
+        final sessionId = _activeVoiceSessionId;
+        if (sessionId != null && buffer.length >= minVoiceChunk) {
+          final allBytes = buffer.takeBytes();
+          int offset = 0;
+          while (allBytes.length - offset >= minVoiceChunk) {
+            final end = (offset + maxVoiceChunk <= allBytes.length)
+                ? offset + maxVoiceChunk
+                : allBytes.length;
+            final slice = Uint8List.sublistView(allBytes, offset, end);
+            r.sendVoicePayload(sessionId, slice);
+            offset = end;
+          }
+          if (offset < allBytes.length) {
+            buffer.add(Uint8List.sublistView(allBytes, offset));
+          }
+        }
+      });
+    } catch (e) {
+      stopVoiceSearch();
+      return;
+    }
+
+    // Safety timeout: automatically finalize after 10 seconds
+    _voiceTimeoutTimer?.cancel();
+    _voiceTimeoutTimer = Timer(const Duration(seconds: 10), () {
+      stopVoiceSearch();
+    });
+
+    // Fallback: If TV did not send RemoteVoiceBegin within 700ms, start session with id 1
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (_isVoiceRecording && _activeVoiceSessionId == null) {
+        _activeVoiceSessionId = 1;
+        r.sendVoiceBegin(1);
+        _safeNotifyListeners();
+      }
+    });
+  }
+
+  void _onTvVoiceSessionStarted(int sessionId) {
+    _activeVoiceSessionId = sessionId;
+    _safeNotifyListeners();
+  }
+
+  Future<void> stopVoiceSearch() async {
+    _voiceTimeoutTimer?.cancel();
+    _voiceTimeoutTimer = null;
+
+    final sessionId = _activeVoiceSessionId;
+    _activeVoiceSessionId = null;
+    _isVoiceRecording = false;
+
+    try {
+      await _audioStreamSub?.cancel();
+      _audioStreamSub = null;
+      if (_audioRecorder != null && await _audioRecorder!.isRecording()) {
+        await _audioRecorder!.stop();
+      }
+    } catch (_) {}
+
+    final r = _remote;
+    if (r != null && r.isConnected && sessionId != null) {
+      final buffer = _voiceAudioBuffer;
+      if (buffer != null && buffer.isNotEmpty) {
+        final remaining = buffer.takeBytes();
+        if (remaining.length >= 8192) {
+          r.sendVoicePayload(sessionId, remaining);
+        } else {
+          // Pad with silence up to 8192 bytes so the last payload meets TV threshold
+          final padded = Uint8List(8192);
+          padded.setRange(0, remaining.length, remaining);
+          r.sendVoicePayload(sessionId, padded);
+        }
+      }
+      r.sendVoiceEnd(sessionId);
+    }
+    _voiceAudioBuffer = null;
+
+    _safeNotifyListeners();
   }
 
   /// Called when the flyout opens: reconnect right away if offline.
@@ -778,6 +932,8 @@ class TvController extends ChangeNotifier {
     AdbService.instance.removeListener(_onAdbChanged);
     _disposed = true;
     _reconnectTimer?.cancel();
+    _voiceTimeoutTimer?.cancel();
+    _audioRecorder?.dispose();
     _teardown();
     _pairing?.close();
     _externalKeystrokeCtrl.close();

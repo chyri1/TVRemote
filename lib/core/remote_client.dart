@@ -74,7 +74,10 @@ class RemoteClient {
   final _closedCtrl = StreamController<Object?>.broadcast();
   final _currentAppCtrl = StreamController<AppInfo>.broadcast();
   final _imeStatusCtrl = StreamController<ImeStatus>.broadcast();
+  final _voiceSessionCtrl = StreamController<int>.broadcast();
+  final _voiceEndCtrl = StreamController<int>.broadcast();
   ImeStatus? _lastImeStatus;
+  int? _currentVoiceSessionId;
 
   RemoteClient({
     required this.host,
@@ -87,6 +90,9 @@ class RemoteClient {
   Stream<VolumeInfo> get volume => _volumeCtrl.stream;
   Stream<AppInfo> get currentApp => _currentAppCtrl.stream;
   Stream<ImeStatus> get imeStatus => _imeStatusCtrl.stream;
+  Stream<int> get voiceSession => _voiceSessionCtrl.stream;
+  Stream<int> get voiceEnd => _voiceEndCtrl.stream;
+  int? get currentVoiceSessionId => _currentVoiceSessionId;
   ImeStatus? get currentImeStatus => _lastImeStatus;
   bool get hasActiveIme => _lastImeStatus?.active == true;
 
@@ -229,6 +235,28 @@ class RemoteClient {
           _volumeCtrl.add(VolumeInfo(level, max, vol.boolean(8) ?? false));
         }
       }
+
+      // Android TV Remote v2 Voice protocol
+      final voiceBegin = m.message(30);
+      if (voiceBegin != null) {
+        final sessionId = voiceBegin.int32(1);
+        if (sessionId != null) {
+          _currentVoiceSessionId = sessionId;
+          // Confirm session initiation back to the TV
+          sendVoiceBegin(sessionId);
+          if (!_voiceSessionCtrl.isClosed) {
+            _voiceSessionCtrl.add(sessionId);
+          }
+        }
+      }
+
+      final voiceEnd = m.message(32);
+      if (voiceEnd != null) {
+        final sessionId = voiceEnd.int32(1);
+        if (!_voiceEndCtrl.isClosed) {
+          _voiceEndCtrl.add(sessionId ?? 0);
+        }
+      }
     } catch (_) {}
   }
 
@@ -314,6 +342,30 @@ class RemoteClient {
     _send(ProtoWriter().message(90, ProtoWriter().string(1, link)));
   }
 
+  /// Sends RemoteVoiceBegin (tag 30) with session ID to open or confirm voice session
+  void sendVoiceBegin(int sessionId) {
+    _send(ProtoWriter().message(
+      30,
+      ProtoWriter().int32(1, sessionId),
+    ));
+  }
+
+  /// Streams PCM 16-bit 8000Hz mono audio samples (tag 31) to Android TV
+  void sendVoicePayload(int sessionId, List<int> samples) {
+    _send(ProtoWriter().message(
+      31,
+      ProtoWriter().int32(1, sessionId).bytes(2, samples),
+    ));
+  }
+
+  /// Signals end of voice input session (tag 32)
+  void sendVoiceEnd(int sessionId) {
+    _send(ProtoWriter().message(
+      32,
+      ProtoWriter().int32(1, sessionId),
+    ));
+  }
+
   void _finish(Object? error) {
     if (!_ready.isCompleted) {
       _ready.completeError(error ?? const RemoteRejectedException());
@@ -333,6 +385,8 @@ class RemoteClient {
     await _closedCtrl.close();
     await _currentAppCtrl.close();
     await _imeStatusCtrl.close();
+    await _voiceSessionCtrl.close();
+    await _voiceEndCtrl.close();
   }
 }
 

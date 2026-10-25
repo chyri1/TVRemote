@@ -46,3 +46,17 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Android Signing & Keystore security
+key.properties
+**/key.properties
+*.jks
+*.keystore
+*.jks.old
+
+# Binaries and scratch files
+*.apk
+*.exe
+android/build/
+scratch/
+scratch*

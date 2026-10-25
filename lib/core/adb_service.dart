@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'adb_socket_client.dart';
 import 'app_settings.dart';
 
 enum AdbState {
@@ -78,6 +79,8 @@ class AdbService extends ChangeNotifier {
 
   String? _adbPath;
   String? get adbPath => _adbPath;
+  AdbSocketClient? _socketClient;
+  bool _isConnectingSocket = false;
 
   bool get isMinimalAdb =>
       _adbPath != null && _adbPath!.toLowerCase().contains('minimal adb');
@@ -137,6 +140,20 @@ class AdbService extends ChangeNotifier {
 
   Uint8List? _currentFrame;
   Uint8List? get currentFrame => _currentFrame;
+
+  DateTime? _lastFrameTime;
+  DateTime? get lastFrameTime => _lastFrameTime;
+
+  bool get isAdbStale {
+    if (_state != AdbState.connected) return true;
+    if (_lastFrameTime == null) return true;
+    return DateTime.now().difference(_lastFrameTime!).inMilliseconds > 2000;
+  }
+
+  int get secondsSinceLastFrame {
+    if (_lastFrameTime == null) return 0;
+    return DateTime.now().difference(_lastFrameTime!).inSeconds;
+  }
 
   String? _currentAppPackage;
   String? get currentAppPackage => _currentAppPackage;
@@ -249,6 +266,13 @@ class AdbService extends ChangeNotifier {
 
   /// Locates adb binary or flags it as missing
   Future<String?> findAdb() async {
+    if (!Platform.isWindows) {
+      _adbPath = 'socket';
+      _state = AdbState.idle;
+      notifyListeners();
+      return _adbPath;
+    }
+
     _state = AdbState.checking;
     notifyListeners();
 
@@ -436,6 +460,60 @@ class AdbService extends ChangeNotifier {
       return;
     }
 
+    if (!Platform.isWindows) {
+      if (_isConnectingSocket) return;
+      _isConnectingSocket = true;
+      _connectedHost = host;
+      _adbPort = targetPort;
+      _state = AdbState.connecting;
+      _errorMessage = null;
+      notifyListeners();
+      addLog('adb connect $host:$targetPort', 'Iniciando conexão socket com $host:$targetPort...');
+
+      try {
+        await _socketClient?.disconnect();
+        final client = AdbSocketClient(host: host, port: targetPort);
+        _socketClient = client;
+
+        client.onWaitingAuth = () {
+          _state = AdbState.unauthorized;
+          _errorMessage = 'Aguardando autorização na TV.\nOlhe para a tela da TV e marque "Sempre permitir", depois clique em OK.';
+          notifyListeners();
+          addLog('adb connect $host:$targetPort', 'Aguardando autorização na tela da TV (marque "Sempre permitir" e OK)', isError: true);
+        };
+
+        final ok = await client.connect();
+        if (ok) {
+          _state = AdbState.connected;
+          _errorMessage = null;
+          notifyListeners();
+          addLog('adb connect $host:$targetPort', 'Conectado com sucesso via socket ADB!');
+          if (_mode == MirrorMode.adbScreen && !_isStreaming) {
+            startStreaming();
+          }
+          _startAppDetection();
+        } else if (client.isUnauthorized) {
+          _state = AdbState.unauthorized;
+          _errorMessage = 'Aguardando autorização na TV.\nOlhe para a tela da TV e marque "Sempre permitir", depois clique em OK.';
+          notifyListeners();
+          addLog('adb connect $host:$targetPort', 'Não autorizado pela TV. Aceite o prompt de autorização.', exitCode: 1, isError: true);
+        } else {
+          _state = AdbState.error;
+          _errorMessage = 'Não foi possível conectar a $host:$targetPort via socket ADB.';
+          notifyListeners();
+          addLog('adb connect $host:$targetPort', _errorMessage!, exitCode: 1, isError: true);
+        }
+      } catch (e) {
+        _state = AdbState.error;
+        _errorMessage = 'Erro no socket ADB: $e';
+        notifyListeners();
+        addLog('adb connect $host:$targetPort', 'Erro no socket: $e', exitCode: 1, isError: true);
+      } finally {
+        _isConnectingSocket = false;
+      }
+      return;
+    }
+
     if (_adbPath == null || !File(_adbPath!).existsSync()) {
       final found = await findAdb();
       if (found == null) return;
@@ -493,7 +571,6 @@ class AdbService extends ChangeNotifier {
 
     _state = AdbState.connecting;
     _errorMessage = null;
-    _currentFrame = null;
     notifyListeners();
 
     if (_adbPath != null) {
@@ -599,7 +676,10 @@ class AdbService extends ChangeNotifier {
   }
 
   Future<void> _runContinuousStream() async {
-    while (_isStreaming && _state == AdbState.connected && _adbPath != null && _connectedHost != null) {
+    while (_isStreaming &&
+        _state == AdbState.connected &&
+        (Platform.isWindows ? _adbPath != null : (_socketClient?.isConnected == true)) &&
+        _connectedHost != null) {
       final success = await _fetchFrame();
       if (!_isStreaming || _state != AdbState.connected) break;
       if (!success) {
@@ -615,8 +695,43 @@ class AdbService extends ChangeNotifier {
   }
 
   Future<bool> _fetchFrame() async {
-    if (_isFetchingFrame || _state != AdbState.connected || _adbPath == null || _connectedHost == null) {
+    final hasBackend = Platform.isWindows ? (_adbPath != null) : (_socketClient?.isConnected == true);
+    if (_isFetchingFrame || _state != AdbState.connected || !hasBackend || _connectedHost == null) {
       return false;
+    }
+
+    if (!Platform.isWindows) {
+      if (_socketClient == null || !_socketClient!.isConnected) {
+        return false;
+      }
+      _isFetchingFrame = true;
+      try {
+        final frame = await _socketClient!.fetchScreenshot();
+        if (frame != null &&
+            frame.length > 10240 &&
+            frame[0] == 0x89 &&
+            frame[1] == 0x50 &&
+            frame[2] == 0x4E &&
+            frame[3] == 0x47) {
+          // 1. Armazena no celular a screenshot retirada da TV
+          try {
+            final targetDir = Directory.systemTemp.path;
+            final localFile = File('$targetDir/screenshot.png');
+            await localFile.writeAsBytes(frame, flush: false);
+          } catch (_) {}
+
+          // 2. Atualiza a tela com o frame capturado
+          _lastFrameTime = DateTime.now();
+          _currentFrame = frame;
+          notifyListeners();
+          return true;
+        }
+        return false;
+      } catch (_) {
+        return false;
+      } finally {
+        _isFetchingFrame = false;
+      }
     }
 
     _isFetchingFrame = true;
@@ -652,8 +767,8 @@ class AdbService extends ChangeNotifier {
       if (await localFile.exists()) {
         final bytes = await localFile.readAsBytes();
         final len = bytes.length;
-        // Validação rigorosa: cabeçalho PNG (0x89 0x50 0x4E 0x47) e marcador final de integridade IEND (0x49 0x45 0x4E 0x44)
-        if (len > 64 &&
+        // Validação rigorosa: cabeçalho PNG, tamanho mínimo (>10KB) para ignorar frames pretos de DRM, e marcador IEND
+        if (len > 10240 &&
             bytes[0] == 0x89 &&
             bytes[1] == 0x50 &&
             bytes[2] == 0x4E &&
@@ -662,6 +777,7 @@ class AdbService extends ChangeNotifier {
             bytes[len - 7] == 0x45 &&
             bytes[len - 6] == 0x4E &&
             bytes[len - 5] == 0x44) {
+          _lastFrameTime = DateTime.now();
           _currentFrame = bytes;
           notifyListeners();
           return true;
@@ -683,6 +799,43 @@ class AdbService extends ChangeNotifier {
 
   /// Runs an arbitrary command via connected ADB device
   Future<String> runCommand(String command) async {
+    if (!Platform.isWindows) {
+      var clean = command.trim();
+      if (clean.startsWith('adb ')) {
+        clean = clean.substring(4).trim();
+      }
+      if (clean == 'devices') {
+        final host = _connectedHost ?? 'device';
+        final res = 'List of devices attached\n$host:$_adbPort\t${_state == AdbState.connected ? 'device' : 'offline'}\n';
+        addLog(command, res);
+        return res;
+      }
+      if (clean == 'disconnect') {
+        await disconnect();
+        const res = 'Disconnected from all devices';
+        addLog(command, res);
+        return res;
+      }
+      if (clean.startsWith('connect ')) {
+        final host = clean.substring(8).trim().split(':').first;
+        await connectToTv(host);
+        final res = 'Connecting to $host...';
+        addLog(command, res);
+        return res;
+      }
+      if (clean.startsWith('shell ')) {
+        clean = clean.substring(6).trim();
+      }
+      if (_socketClient != null) {
+        final res = await _socketClient!.exec(clean);
+        addLog(command, res.isEmpty ? '(Comando executado com sucesso)' : res);
+        return res;
+      }
+      const msg = 'Socket ADB não inicializado.';
+      addLog(command, msg, exitCode: 1, isError: true);
+      return msg;
+    }
+
     if (_adbPath == null || !File(_adbPath!).existsSync()) {
       const msg = 'ADB não encontrado no sistema.';
       addLog(command, msg, exitCode: 1, isError: true);
@@ -738,27 +891,43 @@ class AdbService extends ChangeNotifier {
 
   /// Types text directly into the focused field on Android TV via ADB
   Future<bool> sendText(String text) async {
+    // In Android adb input text, space is represented as %s and special chars must be escaped
+    final escaped = text
+        .replaceAll(' ', '%s')
+        .replaceAll(r'\', r'\\')
+        .replaceAll('"', r'\"')
+        .replaceAll("'", r"\'")
+        .replaceAll('&', r'\&')
+        .replaceAll('(', r'\(')
+        .replaceAll(')', r'\)')
+        .replaceAll('<', r'\<')
+        .replaceAll('>', r'\>')
+        .replaceAll('|', r'\|')
+        .replaceAll(';', r'\;')
+        .replaceAll('\$', r'\$')
+        .replaceAll('`', r'\`');
+
+    if (!Platform.isWindows) {
+      if (_socketClient == null || !_socketClient!.isConnected) {
+        if (_connectedHost != null) {
+          await connectToTv(_connectedHost!, port: _adbPort);
+        }
+      }
+      if (_socketClient != null && _socketClient!.isConnected) {
+        final ok = await _socketClient!.sendText(escaped);
+        addLog('adb shell input text "$text"', ok ? 'Texto enviado com sucesso' : 'Falha ao enviar texto', isError: !ok);
+        return ok;
+      }
+      addLog('adb shell input text "$text"', 'Erro: Socket ADB não conectado', exitCode: 1, isError: true);
+      return false;
+    }
+
     if (_state != AdbState.connected || _connectedHost == null || _adbPath == null) {
       addLog('adb shell input text "$text"', 'Erro: ADB não conectado', exitCode: 1, isError: true);
       return false;
     }
     try {
       final target = '$_connectedHost:$_adbPort';
-      // In Android adb input text, space is represented as %s and special chars must be escaped
-      final escaped = text
-          .replaceAll(' ', '%s')
-          .replaceAll(r'\', r'\\')
-          .replaceAll('"', r'\"')
-          .replaceAll("'", r"\'")
-          .replaceAll('&', r'\&')
-          .replaceAll('(', r'\(')
-          .replaceAll(')', r'\)')
-          .replaceAll('<', r'\<')
-          .replaceAll('>', r'\>')
-          .replaceAll('|', r'\|')
-          .replaceAll(';', r'\;')
-          .replaceAll('\$', r'\$')
-          .replaceAll('`', r'\`');
       final res = await Process.run(
         _adbPath!,
         ['-s', target, 'shell', 'input', 'text', escaped],
@@ -781,6 +950,21 @@ class AdbService extends ChangeNotifier {
 
   /// Sends a keyevent code directly via ADB (e.g. 66 for ENTER, 67 for DEL)
   Future<bool> sendKeyEvent(int keyCode) async {
+    if (!Platform.isWindows) {
+      if (_socketClient == null || !_socketClient!.isConnected) {
+        if (_connectedHost != null) {
+          await connectToTv(_connectedHost!, port: _adbPort);
+        }
+      }
+      if (_socketClient != null && _socketClient!.isConnected) {
+        final ok = await _socketClient!.sendKeyEvent(keyCode);
+        addLog('adb shell input keyevent $keyCode', ok ? 'KeyCode $keyCode enviado' : 'Falha ao enviar keycode', isError: !ok);
+        return ok;
+      }
+      addLog('adb shell input keyevent $keyCode', 'Erro: Socket ADB não conectado', exitCode: 1, isError: true);
+      return false;
+    }
+
     if (_state != AdbState.connected || _connectedHost == null || _adbPath == null) {
       addLog('adb shell input keyevent $keyCode', 'Erro: ADB não conectado', exitCode: 1, isError: true);
       return false;
@@ -827,9 +1011,30 @@ class AdbService extends ChangeNotifier {
   Future<void> checkForegroundApp() async => _checkForegroundApp();
 
   Future<void> _checkForegroundApp() async {
-    if (_isCheckingApp || _adbPath == null || _connectedHost == null) {
+    if (_isCheckingApp || _connectedHost == null) {
       return;
     }
+    if (!Platform.isWindows) {
+      if (_state != AdbState.connected || _socketClient == null || !_socketClient!.isConnected) {
+        return;
+      }
+      _isCheckingApp = true;
+      try {
+        final stdoutStr = await _socketClient!.exec(
+          'dumpsys power | grep mWakefulness ; dumpsys window | grep -E "mCurrentFocus|mFocusedApp"',
+        );
+        if (stdoutStr.isNotEmpty) {
+          _consecutiveCheckErrors = 0;
+          _parseForegroundApp(stdoutStr);
+        }
+      } catch (_) {
+      } finally {
+        _isCheckingApp = false;
+      }
+      return;
+    }
+
+    if (_adbPath == null) return;
     // If we're disconnected or in error, attempt periodic reconnection
     if (_state != AdbState.connected) {
       if (_state == AdbState.error || _state == AdbState.idle) {
@@ -1009,7 +1214,10 @@ class AdbService extends ChangeNotifier {
     stopStreaming();
     _stopAppDetection();
     _stopAuthPolling();
-    if (_adbPath != null && _connectedHost != null) {
+    if (!Platform.isWindows) {
+      await _socketClient?.disconnect();
+      _socketClient = null;
+    } else if (_adbPath != null && _connectedHost != null) {
       try {
         await Process.run(_adbPath!, ['disconnect', '$_connectedHost:$_adbPort']);
       } catch (_) {}

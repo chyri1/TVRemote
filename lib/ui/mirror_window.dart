@@ -1654,10 +1654,31 @@ class _MirrorWindowAppState extends State<MirrorWindowApp> with WindowListener {
                           onPressed: () => adb.refreshFrame(),
                         );
 
-                        // AO VIVO badge
+                        // AO VIVO / CARREGANDO badge
+                        final isAdbLoading = !isScreenOff && isAdbMode && (adb.state != AdbState.connected || adb.isAdbStale);
                         final isLiveActive = (!isScreenOff &&
-                            ((isAdbMode && adb.state == AdbState.connected) ||
+                            ((isAdbMode && adb.state == AdbState.connected && !adb.isAdbStale) ||
                                 (!isAdbMode && info != null && info.isPlaying)));
+                        final badgeColor = isScreenOff
+                            ? Colors.redAccent
+                            : (isAdbLoading
+                                ? Colors.amber
+                                : (isLiveActive ? const Color(0xFF107C41) : Colors.redAccent));
+                        final hasFrame = adb.currentFrame != null;
+                        final String badgeText;
+                        if (isScreenOff) {
+                          badgeText = 'DESLIGADA';
+                        } else if (isAdbLoading) {
+                          if (hasFrame) {
+                            final secs = adb.secondsSinceLastFrame;
+                            badgeText = 'CARREGANDO (${secs}s)';
+                          } else {
+                            badgeText = 'CARREGANDO';
+                          }
+                        } else {
+                          badgeText = 'AO VIVO';
+                        }
+
                         final aoVivoBadge = Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4.5),
@@ -1665,9 +1686,7 @@ class _MirrorWindowAppState extends State<MirrorWindowApp> with WindowListener {
                             color: Colors.black.withValues(alpha: 0.65),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                              color: isLiveActive
-                                  ? const Color(0xFF107C41)
-                                  : Colors.redAccent.withValues(alpha: 0.6),
+                              color: badgeColor.withValues(alpha: 0.8),
                               width: 0.8,
                             ),
                           ),
@@ -1678,15 +1697,13 @@ class _MirrorWindowAppState extends State<MirrorWindowApp> with WindowListener {
                                 width: 7,
                                 height: 7,
                                 decoration: BoxDecoration(
-                                  color: isLiveActive
-                                      ? const Color(0xFF107C41)
-                                      : Colors.redAccent,
+                                  color: badgeColor,
                                   shape: BoxShape.circle,
                                 ),
                               ),
                               const SizedBox(width: 5),
                               Text(
-                                isScreenOff ? 'DESLIGADA' : 'AO VIVO',
+                                badgeText,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 10.5,

@@ -1,19 +1,36 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../theme.dart';
 
 /// Opens the official Chyri website in the default system browser.
-void launchChyriWebsite() {
-  const url = 'https://www.chyri.com.br/';
+void launchChyriWebsite() async {
+  final uri = Uri.parse('https://www.chyri.com.br/');
+  try {
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (launched) return;
+  } catch (_) {}
+
+  try {
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.platformDefault,
+    );
+    if (launched) return;
+  } catch (_) {}
+
   try {
     if (Platform.isWindows) {
-      Process.run('cmd', ['/c', 'start', '', url]);
+      Process.run('cmd', ['/c', 'start', '', uri.toString()]);
     } else if (Platform.isMacOS) {
-      Process.run('open', [url]);
-    } else {
-      Process.run('xdg-open', [url]);
+      Process.run('open', [uri.toString()]);
+    } else if (Platform.isLinux) {
+      Process.run('xdg-open', [uri.toString()]);
     }
   } catch (_) {}
 }

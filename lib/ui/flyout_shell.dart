@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -52,17 +53,33 @@ class _FlyoutShellState extends State<FlyoutShell>
   bool get _isShowingPairing =>
       _showPairing || widget.controller.status == TvStatus.noTv;
 
+  DateTime? _lastAndroidBackPressTime;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _currentWindowHeight = _calculateDesiredHeight();
-    windowManager.addListener(this);
-    trayManager.addListener(this);
-    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
+    if (Platform.isWindows) {
+      _currentWindowHeight = _calculateDesiredHeight();
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
+      _initTray();
+    } else if (Platform.isAndroid) {
+      _requestAndroidPermissions();
+    }
     widget.controller.addListener(_onStateChanged);
     AppSettings.instance.addListener(_onStateChanged);
-    _initTray();
+  }
+
+  Future<void> _requestAndroidPermissions() async {
+    try {
+      await [
+        Permission.microphone,
+        Permission.photos,
+        Permission.storage,
+      ].request();
+    } catch (_) {}
   }
 
   void _onStateChanged() {
@@ -459,10 +476,12 @@ class _FlyoutShellState extends State<FlyoutShell>
     _debounceResizeTimer?.cancel();
     widget.controller.removeListener(_onStateChanged);
     AppSettings.instance.removeListener(_onStateChanged);
-    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
-    _cancelKeyRepeat();
-    windowManager.removeListener(this);
-    trayManager.removeListener(this);
+    if (Platform.isWindows) {
+      HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
+      _cancelKeyRepeat();
+      windowManager.removeListener(this);
+      trayManager.removeListener(this);
+    }
     _focusNode.dispose();
     super.dispose();
   }
@@ -471,6 +490,140 @@ class _FlyoutShellState extends State<FlyoutShell>
   Widget build(BuildContext context) {
     final p = Palette.of(context);
     final settings = AppSettings.instance;
+    final isDesktop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+    final viewContent = ListenableBuilder(
+      listenable: widget.controller,
+      builder: (ctx, _) {
+        return AnimatedSwitcher(
+          duration: settings.animationDuration,
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            alignment: Alignment.topCenter,
+            children: [
+              ...previousChildren,
+              ?currentChild,
+            ],
+          ),
+          transitionBuilder: (child, animation) {
+            if (settings.animationDurationMs == 0) {
+              return child;
+            }
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0.0, 0.03),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: _isShowingPairing
+              ? KeyedSubtree(
+                  key: const ValueKey('pairing_view'),
+                  child: PairingView(
+                    controller: widget.controller,
+                    initialHost: _reconfigureHost ??
+                        widget.controller.selected?.host,
+                    isReconfiguring: _reconfigureHost != null,
+                    onDiscoveredCountChanged:
+                        _onDiscoveredCountChanged,
+                    onStepChanged: _onStepChanged,
+                    onDone: () => setState(() {
+                      _showPairing = false;
+                      _reconfigureHost = null;
+                      _scheduleCheckAndUpdateWindowSize();
+                    }),
+                  ),
+                )
+              : KeyedSubtree(
+                  key: const ValueKey('remote_view'),
+                  child: RemoteView(
+                    controller: widget.controller,
+                    onOpenPairing: () => setState(() {
+                      _showPairing = true;
+                      _discoveredTvCount = 0;
+                      _currentPairStep = PairStep.selectHost;
+                      _reconfigureHost = null;
+                      _scheduleCheckAndUpdateWindowSize();
+                    }),
+                    onOpenReconfigurePin: (host) => setState(() {
+                      _showPairing = true;
+                      _discoveredTvCount = 0;
+                      _currentPairStep = PairStep.enterCode;
+                      _reconfigureHost = host;
+                      _scheduleCheckAndUpdateWindowSize();
+                    }),
+                  ),
+                ),
+        );
+      },
+    );
+
+    if (!isDesktop) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+
+          // 1. Se estiver no controle, volta para a tela de pareamento
+          if (!_isShowingPairing) {
+            setState(() {
+              _showPairing = true;
+              _discoveredTvCount = 0;
+              _currentPairStep = PairStep.selectHost;
+              _reconfigureHost = null;
+            });
+            return;
+          }
+
+          // 2. Se estiver na tela de pareamento digitando PIN, volta para a lista de TVs
+          if (_currentPairStep == PairStep.enterCode) {
+            widget.controller.cancelPairing();
+            setState(() {
+              _currentPairStep = PairStep.selectHost;
+            });
+            return;
+          }
+
+          // 3. Se estiver na tela inicial de pareamento, requer duplo voltar para fechar
+          final now = DateTime.now();
+          if (_lastAndroidBackPressTime == null ||
+              now.difference(_lastAndroidBackPressTime!) > const Duration(seconds: 2)) {
+            _lastAndroidBackPressTime = now;
+            ScaffoldMessenger.of(context).clearSnackBars();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  appTr(
+                    pt: 'Pressione voltar novamente para sair',
+                    en: 'Press back again to exit',
+                    es: 'Presione atrás de nuevo para salir',
+                  ),
+                  style: const TextStyle(fontSize: 12),
+                ),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+                margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              ),
+            );
+            return;
+          }
+
+          // Segundo toque dentro do tempo: fecha o app
+          SystemNavigator.pop();
+        },
+        child: Scaffold(
+          backgroundColor: p.panelTint,
+          body: SafeArea(
+            child: viewContent,
+          ),
+        ),
+      );
+    }
 
     return Focus(
       focusNode: _focusNode,
@@ -495,76 +648,7 @@ class _FlyoutShellState extends State<FlyoutShell>
           child: Stack(
             children: [
               Positioned.fill(
-                child: ListenableBuilder(
-                  listenable: widget.controller,
-                  builder: (ctx, _) {
-                    return AnimatedSwitcher(
-                      duration: settings.animationDuration,
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      layoutBuilder: (currentChild, previousChildren) => Stack(
-                        alignment: Alignment.topCenter,
-                        children: [
-                          ...previousChildren,
-                          ?currentChild,
-                        ],
-                      ),
-                      transitionBuilder: (child, animation) {
-                        if (settings.animationDurationMs == 0) {
-                          return child;
-                        }
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(0.0, 0.03),
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: _isShowingPairing
-                          ? KeyedSubtree(
-                              key: const ValueKey('pairing_view'),
-                              child: PairingView(
-                                controller: widget.controller,
-                                initialHost: _reconfigureHost ??
-                                    widget.controller.selected?.host,
-                                isReconfiguring: _reconfigureHost != null,
-                                onDiscoveredCountChanged:
-                                    _onDiscoveredCountChanged,
-                                onStepChanged: _onStepChanged,
-                                onDone: () => setState(() {
-                                  _showPairing = false;
-                                  _reconfigureHost = null;
-                                  _scheduleCheckAndUpdateWindowSize();
-                                }),
-                              ),
-                            )
-                          : KeyedSubtree(
-                              key: const ValueKey('remote_view'),
-                              child: RemoteView(
-                                controller: widget.controller,
-                                onOpenPairing: () => setState(() {
-                                  _showPairing = true;
-                                  _discoveredTvCount = 0;
-                                  _currentPairStep = PairStep.selectHost;
-                                  _reconfigureHost = null;
-                                  _scheduleCheckAndUpdateWindowSize();
-                                }),
-                                onOpenReconfigurePin: (host) => setState(() {
-                                  _showPairing = true;
-                                  _discoveredTvCount = 0;
-                                  _currentPairStep = PairStep.enterCode;
-                                  _reconfigureHost = host;
-                                  _scheduleCheckAndUpdateWindowSize();
-                                }),
-                              ),
-                            ),
-                    );
-                  },
-                ),
+                child: viewContent,
               ),
 
               // Borda superior redimensionável manualmente puxando com o mouse
